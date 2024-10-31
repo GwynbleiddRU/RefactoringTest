@@ -4,65 +4,32 @@ namespace LegacyApp
 {
     public class UserService
     {
-        public bool AddUser(string firName, string surname, string email, DateTime dateOfBirth, int clientId)
+        private readonly ClientRepository _clientRepository;
+        private readonly IUserCreditService _userCreditService;
+
+        public UserService(ClientRepository clientRepository, IUserCreditService userCreditService)
         {
-            if (string.IsNullOrEmpty(firName) || string.IsNullOrEmpty(surname))
+            _clientRepository = clientRepository;
+            _userCreditService = userCreditService;
+        }
+
+        public bool AddUser(
+            string firstName,
+            string surname,
+            string email,
+            DateTime dateOfBirth,
+            int clientId
+        )
+        {
+            if (!IsValidUserInput(firstName, surname, email, dateOfBirth))
             {
                 return false;
             }
 
-            if (!email.Contains("@") && !email.Contains("."))
-            {
-                return false;
-            }
+            var client = _clientRepository.GetById(clientId);
+            var user = CreateUser(firstName, surname, email, dateOfBirth, client);
 
-            var now = DateTime.Now;
-            int age = now.Year - dateOfBirth.Year;
-            if (now.Month < dateOfBirth.Month || (now.Month == dateOfBirth.Month && now.Day < dateOfBirth.Day)) age--;
-
-            if (age < 21)
-            {
-                return false;
-            }
-
-            var clientRepository = new ClientRepository();
-            var client = clientRepository.GetById(clientId);
-
-            var user = new User
-            {
-                Client = client,
-                DateOfBirth = dateOfBirth,
-                EmailAddress = email,
-                FirstName = firName,
-                Surname = surname
-            };
-
-            if (client.Name == "VeryImportantClient")
-            {
-                // Пропустить проверку лимита
-                user.HasCreditLimit = false;
-            }
-            else if (client.Name == "ImportantClient")
-            {
-                // Проверить лимит и удвоить его
-                user.HasCreditLimit = true;
-                using (var userCreditService = new UserCreditServiceClient())
-                {
-                    var creditLimit = userCreditService.GetCreditLimit(user.FirstName, user.Surname, user.DateOfBirth);
-                    creditLimit = creditLimit * 2;
-                    user.CreditLimit = creditLimit;
-                }
-            }
-            else
-            {
-                // Проверить лимит
-                user.HasCreditLimit = true;
-                using (var userCreditService = new UserCreditServiceClient())
-                {
-                    var creditLimit = userCreditService.GetCreditLimit(user.FirstName, user.Surname, user.DateOfBirth);
-                    user.CreditLimit = creditLimit;
-                }
-            }
+            SetCreditLimit(user, client);
 
             if (user.HasCreditLimit && user.CreditLimit < 500)
             {
@@ -70,8 +37,71 @@ namespace LegacyApp
             }
 
             UserDataAccess.AddUser(user);
-
             return true;
+        }
+
+        private bool IsValidUserInput(
+            string firstName,
+            string surname,
+            string email,
+            DateTime dateOfBirth
+        )
+        {
+            return !string.IsNullOrEmpty(firstName)
+                && !string.IsNullOrEmpty(surname)
+                && email.Contains("@")
+                && email.Contains(".")
+                && CalculateAge(dateOfBirth) >= 21;
+        }
+
+        private int CalculateAge(DateTime dateOfBirth)
+        {
+            var now = DateTime.Now;
+            int age = now.Year - dateOfBirth.Year;
+            if (
+                now.Month < dateOfBirth.Month
+                || (now.Month == dateOfBirth.Month && now.Day < dateOfBirth.Day)
+            )
+            {
+                age--;
+            }
+            return age;
+        }
+
+        private User CreateUser(
+            string firstName,
+            string surname,
+            string email,
+            DateTime dateOfBirth,
+            Client client
+        )
+        {
+            return new User
+            {
+                FirstName = firstName,
+                Surname = surname,
+                EmailAddress = email,
+                DateOfBirth = dateOfBirth,
+                Client = client
+            };
+        }
+
+        private void SetCreditLimit(User user, Client client)
+        {
+            if (client.Name == "VeryImportantClient")
+            {
+                user.HasCreditLimit = false;
+            }
+            else
+            {
+                user.HasCreditLimit = true;
+                int creditLimit = _userCreditService.GetCreditLimit(
+                    user.FirstName,
+                    user.Surname,
+                    user.DateOfBirth
+                );
+                user.CreditLimit = client.Name == "ImportantClient" ? creditLimit * 2 : creditLimit;
+            }
         }
     }
 }
